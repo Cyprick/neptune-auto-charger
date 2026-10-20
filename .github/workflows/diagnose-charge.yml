@@ -1,0 +1,60 @@
+name: Diagnose Charge Records
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      NEPTUNE_OPEN_ID: ${{ secrets.NEPTUNE_OPEN_ID }}
+      NEPTUNE_AREA_ID: ${{ secrets.NEPTUNE_AREA_ID }}
+      NEPTUNE_EMPLOYEE_ID: ${{ secrets.NEPTUNE_EMPLOYEE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Inspect record matching without starting a charge
+        run: |
+          python - <<'PY'
+          import asyncio
+          from collections import Counter
+          from datetime import datetime, timedelta
+          import aiohttp
+          from main import get_charge_log, TZ_BEIJING
+          from config import EMPLOYEE_ID, POWER_OFF_END_TYPE
+
+          async def diagnose():
+              now = datetime.now(TZ_BEIJING)
+              yesterday = now.date() - timedelta(days=1)
+              start = datetime.combine(yesterday, datetime.min.time(), TZ_BEIJING).replace(hour=23, minute=45)
+              end = datetime.combine(now.date(), datetime.min.time(), TZ_BEIJING).replace(hour=0, minute=15)
+              async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                  records = await get_charge_log(session, now.strftime('%Y%m'))
+              print('Total records:', len(records))
+              print('End types and JSON types:', dict(Counter((str(r.get('endtype')), type(r.get('endtype')).__name__) for r in records)))
+              in_window = yesterday_end = type_39 = both = invalid = 0
+              for record in records:
+                  value = record.get('enddt')
+                  try:
+                      ended = datetime.fromtimestamp(float(value) / 1000, tz=TZ_BEIJING)
+                  except (TypeError, ValueError, OverflowError):
+                      invalid += 1
+                      continue
+                  matching_type = record.get('endtype') == POWER_OFF_END_TYPE
+                  matching_time = start <= ended <= end
+                  yesterday_end += ended.date() == yesterday
+                  in_window += matching_time
+                  type_39 += matching_type
+                  both += matching_type and matching_time
+              print('Records ending yesterday:', yesterday_end)
+              print('Records in 23:45-00:15 window:', in_window)
+              print('Records with expected end type:', type_39)
+              print('Records matching both conditions:', both)
+              print('Invalid or missing end times:', invalid)
+              print('Read-only diagnosis complete; beginCharge was not called.')
+
+          asyncio.run(diagnose())
+          PY
