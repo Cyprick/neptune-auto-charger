@@ -36,6 +36,7 @@ jobs:
               print('Total records:', len(records))
               print('End types and JSON types:', dict(Counter((str(r.get('endtype')), type(r.get('endtype')).__name__) for r in records)))
               in_window = yesterday_end = type_39 = both = invalid = 0
+              day_offsets = Counter()
               for record in records:
                   value = record.get('enddt')
                   try:
@@ -43,12 +44,14 @@ jobs:
                   except (TypeError, ValueError, OverflowError):
                       invalid += 1
                       continue
+                  day_offsets[((now.date() - ended.date()).days, str(record.get('endtype')))] += 1
                   matching_type = record.get('endtype') == POWER_OFF_END_TYPE
                   matching_time = start <= ended <= end
                   yesterday_end += ended.date() == yesterday
                   in_window += matching_time
                   type_39 += matching_type
                   both += matching_type and matching_time
+              print('End date offsets (days before today, end type):', dict(day_offsets))
               print('Records ending yesterday:', yesterday_end)
               print('Records in 23:45-00:15 window:', in_window)
               print('Records with expected end type:', type_39)
